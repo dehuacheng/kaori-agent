@@ -87,5 +87,4 @@ pytest
 
 ## Related Projects
 
-- **Kaori backend:** `../kaori` — health/finance/life management. Phase 7 integrates with this.
-- **Claude Code analysis:** `../cc_source_code_understanding` — claw-code investigation that informed this design.
+- **Kaori backend:** `../kaori` — health/finance/life management. Phase 7 integrates with this via MCP.
