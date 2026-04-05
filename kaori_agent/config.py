@@ -52,6 +52,7 @@ class Config:
     # Phase 4: Session persistence
     data_db: Path | None = None              # path to kaori.db (or any SQLite DB)
     auto_compact_threshold: int = 80         # % of context window to trigger compaction
+    disabled_tools: list[str] = field(default_factory=list)  # tool names to exclude
 
 
 _config: Config | None = None
@@ -92,6 +93,8 @@ def _load_config() -> Config:
         config.data_db = Path(yaml_data["data_db"]).expanduser()
     if "auto_compact_threshold" in yaml_data:
         config.auto_compact_threshold = int(yaml_data["auto_compact_threshold"])
+    if "disabled_tools" in yaml_data:
+        config.disabled_tools = list(yaml_data["disabled_tools"])
 
     # Resolve backend
     backend_name = yaml_data.get("backend", "deepseek")

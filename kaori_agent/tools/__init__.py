@@ -13,6 +13,7 @@ from kaori_agent.tools.memory import (
 def get_default_tools(
     session_store=None,
     session_id: str | None = None,
+    disabled_tools: list[str] | None = None,
 ) -> list[BaseTool]:
     """Return built-in tools. Memory/session tools are included if session_store is provided."""
     tools: list[BaseTool] = [ReadFileTool(), GlobTool(), GrepTool()]
@@ -21,4 +22,7 @@ def get_default_tools(
         tools.append(GetMemoryTool(session_store=session_store))
         tools.append(ListSessionsTool(session_store=session_store))
         tools.append(ReadSessionTool(session_store=session_store))
+    if disabled_tools:
+        disabled = set(disabled_tools)
+        tools = [t for t in tools if t.name not in disabled]
     return tools

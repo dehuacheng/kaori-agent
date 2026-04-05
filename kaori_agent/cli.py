@@ -174,6 +174,7 @@ async def main() -> None:
     for tool in get_default_tools(
         session_store=session_store,
         session_id=session.id if session else None,
+        disabled_tools=config.disabled_tools,
     ):
         registry.register(tool)
 
@@ -282,9 +283,9 @@ async def main() -> None:
                     # Rebuild system prompt (fresh session)
                     memory_entries = await session_store.list_memory()
                     system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=False)
-                    # Re-register memory tools with new session_id
+                    # Re-register tools with new session_id
                     registry = ToolRegistry()
-                    for tool in get_default_tools(session_store=session_store, session_id=session.id):
+                    for tool in get_default_tools(session_store=session_store, session_id=session.id, disabled_tools=config.disabled_tools):
                         registry.register(tool)
                     if mcp_manager:
                         for tool in mcp_manager.get_all_tools():
@@ -325,9 +326,9 @@ async def main() -> None:
                 # Rebuild prompt with memory + resumed context
                 memory_entries = await session_store.list_memory()
                 system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=True)
-                # Re-register memory tools
+                # Re-register tools
                 registry = ToolRegistry()
-                for tool in get_default_tools(session_store=session_store, session_id=session.id):
+                for tool in get_default_tools(session_store=session_store, session_id=session.id, disabled_tools=config.disabled_tools):
                     registry.register(tool)
                 if mcp_manager:
                     for tool in mcp_manager.get_all_tools():
