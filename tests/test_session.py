@@ -347,3 +347,87 @@ class TestMemoryTools:
         result = await tool.execute()
         assert not result.is_error
         assert "No memories" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Session tools tests
+# ---------------------------------------------------------------------------
+
+class TestSessionTools:
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_tool(self, store: SessionStore):
+        from kaori_agent.tools.memory import ListSessionsTool
+        s = await store.create_session("deepseek", "deepseek-chat")
+        msg = {"role": "user", "content": "hello"}
+        s.messages.append(msg)
+        await s.append_message("user", msg)
+        await s.set_title("Test Chat")
+
+        tool = ListSessionsTool(session_store=store)
+        result = await tool.execute()
+        assert not result.is_error
+        assert "Test Chat" in result.output
+        assert "1 msgs" in result.output
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_tool_empty(self, store: SessionStore):
+        from kaori_agent.tools.memory import ListSessionsTool
+        tool = ListSessionsTool(session_store=store)
+        result = await tool.execute()
+        assert not result.is_error
+        assert "No sessions" in result.output
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_tool_no_store(self):
+        from kaori_agent.tools.memory import ListSessionsTool
+        tool = ListSessionsTool()
+        result = await tool.execute()
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_read_session_tool(self, store: SessionStore):
+        from kaori_agent.tools.memory import ReadSessionTool
+        s = await store.create_session("deepseek", "deepseek-chat")
+        await s.set_title("My Chat")
+        for text in ["Hello", "Hi there", "How are you?"]:
+            msg = {"role": "user", "content": text}
+            s.messages.append(msg)
+            await s.append_message("user", msg)
+
+        tool = ReadSessionTool(session_store=store)
+        result = await tool.execute(session_id_prefix=s.id[:8])
+        assert not result.is_error
+        assert "My Chat" in result.output
+        assert "Hello" in result.output
+        assert "How are you?" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_session_tool_not_found(self, store: SessionStore):
+        from kaori_agent.tools.memory import ReadSessionTool
+        tool = ReadSessionTool(session_store=store)
+        result = await tool.execute(session_id_prefix="nonexist")
+        assert result.is_error
+        assert "No session found" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_session_tool_truncates_long_messages(self, store: SessionStore):
+        from kaori_agent.tools.memory import ReadSessionTool
+        s = await store.create_session("deepseek", "deepseek-chat")
+        msg = {"role": "user", "content": "x" * 1000}
+        s.messages.append(msg)
+        await s.append_message("user", msg)
+
+        tool = ReadSessionTool(session_store=store)
+        result = await tool.execute(session_id_prefix=s.id[:8])
+        assert not result.is_error
+        assert "..." in result.output
+        # Should be truncated to ~500 + "..."
+        assert len(result.output) < 1000
+
+    @pytest.mark.asyncio
+    async def test_read_session_tool_no_store(self):
+        from kaori_agent.tools.memory import ReadSessionTool
+        tool = ReadSessionTool()
+        result = await tool.execute(session_id_prefix="abc")
+        assert result.is_error
