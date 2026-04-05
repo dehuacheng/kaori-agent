@@ -426,6 +426,9 @@ async def main() -> None:
 
         msg_count_before = len(messages)
 
+        # Rebuild system prompt each turn so date/time stays current
+        system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=is_resumed)
+
         try:
             await _handle_stream(
                 backend, messages, registry.get_all(),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from kaori_agent.config import Config, _DEFAULT_SYSTEM_PROMPT
 
 _BASE_INSTRUCTIONS = """\
@@ -29,6 +31,14 @@ def build_system_prompt(
         parts = [user_prompt, "---", _BASE_INSTRUCTIONS]
     else:
         parts = [_BASE_INSTRUCTIONS]
+
+    # Current date/time
+    now = datetime.now()
+    utc_now = datetime.now(timezone.utc)
+    parts.append(
+        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M %A')} (local), "
+        f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC"
+    )
 
     # Inject persistent memory
     if memory_entries:
