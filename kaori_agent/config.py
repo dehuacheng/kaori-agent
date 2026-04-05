@@ -49,6 +49,9 @@ class Config:
     personality_file: str | None = None
     user_data_dir: Path = field(default_factory=lambda: Path.home() / ".kaori-agent")
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    # Phase 4: Session persistence
+    data_db: Path | None = None              # path to kaori.db (or any SQLite DB)
+    auto_compact_threshold: int = 80         # % of context window to trigger compaction
 
 
 _config: Config | None = None
@@ -85,6 +88,10 @@ def _load_config() -> Config:
         config.system_prompt = yaml_data["system_prompt"]
     if "personality_file" in yaml_data:
         config.personality_file = yaml_data["personality_file"]
+    if "data_db" in yaml_data:
+        config.data_db = Path(yaml_data["data_db"]).expanduser()
+    if "auto_compact_threshold" in yaml_data:
+        config.auto_compact_threshold = int(yaml_data["auto_compact_threshold"])
 
     # Resolve backend
     backend_name = yaml_data.get("backend", "deepseek")

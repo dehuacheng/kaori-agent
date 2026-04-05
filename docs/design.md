@@ -166,9 +166,29 @@ Switch from blocking `messages.create()` to streaming `messages.stream()`. Defin
 
 ---
 
-## Phase 4: Sessions
+## Phase 4: Sessions ✅
 
-Persist conversations as JSON files in `~/.kaori-agent/sessions/`. Support resume, list, delete. Implement transcript compaction: summarize old messages to stay within context limits.
+**Implemented:** Session persistence in SQLite (co-located with kaori.db).
+
+**Key files:**
+- `kaori_agent/session.py` — `SessionStore` + `Session` classes
+- `kaori_agent/tools/memory.py` — `SaveMemoryTool`, `GetMemoryTool`
+
+**Data model:** 5 tables in kaori.db (`agent_sessions`, `agent_messages`, `agent_memory`, `agent_compactions`, `agent_prompts`). All `agent_`-prefixed, no FK coupling to existing kaori tables.
+
+**Features:**
+- Session create/load/list/delete with `/sessions`, `/new`, `/resume`, `/delete` commands
+- Message persistence on every turn (auto-save)
+- Auto-title from first user message
+- Cross-session memory (key-value facts) via `/memory` commands and agent tools
+- Transcript compaction when token usage exceeds threshold (default 80% of context window)
+- Versioned compaction summaries (rollback-safe, following kaori's append-only pattern)
+- Personal prompt storage in DB (for future iOS editing)
+- Opt-in: without `data_db` config, CLI works in ephemeral mode
+
+**Config:** `data_db: /path/to/kaori/data/kaori.db` in `~/.kaori-agent/config.yaml`
+
+**iOS integration:** Schema designed for REST API exposure. Backend endpoints deferred to next session (see `kaori/docs/TODO-agent-integration.md`).
 
 ---
 

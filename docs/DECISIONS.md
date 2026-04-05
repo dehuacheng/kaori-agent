@@ -32,3 +32,9 @@
 **User intent:** Get the project running. Phases should coexist in the repo — later phases add files without modifying earlier ones.
 
 **Outcome:** Implemented Phase 0 (bare chat) and Phase 1 (tool loop + read_file, glob, grep) in one pass. Engine always runs the tool loop; with zero tools it degrades to Phase 0 behavior. All 33 unit tests passing.
+
+### 2026-04-05 — Phase 4: Store agent sessions in kaori.db
+
+**User intent:** Implement session persistence for kaori-agent. Store sessions/memory in kaori's SQLite database (co-located with all kaori data) so everything can be backed up together (e.g., Google Drive sync). Design with iOS integration in mind — a future iOS tab will access agent sessions via REST API.
+
+**Outcome:** Agent session tables (`agent_sessions`, `agent_messages`, `agent_memory`, `agent_compactions`, `agent_prompts`) added directly to kaori.db. Tables are `agent_`-prefixed with no foreign keys to existing kaori tables — self-contained island. kaori-agent creates tables via CREATE TABLE IF NOT EXISTS on startup (self-bootstraps). Config points to kaori.db via `data_db` setting. Session persistence is opt-in — without `data_db`, CLI works in ephemeral mode. kaori backend REST API endpoints for iOS deferred to next session (see `kaori/docs/TODO-agent-integration.md`).
