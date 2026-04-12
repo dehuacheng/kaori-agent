@@ -38,3 +38,9 @@
 **User intent:** Implement session persistence for kaori-agent. Store sessions/memory in kaori's SQLite database (co-located with all kaori data) so everything can be backed up together (e.g., Google Drive sync). Design with iOS integration in mind — a future iOS tab will access agent sessions via REST API.
 
 **Outcome:** Agent session tables (`agent_sessions`, `agent_messages`, `agent_memory`, `agent_compactions`, `agent_prompts`) added directly to kaori.db. Tables are `agent_`-prefixed with no foreign keys to existing kaori tables — self-contained island. kaori-agent creates tables via CREATE TABLE IF NOT EXISTS on startup (self-bootstraps). Config points to kaori.db via `data_db` setting. Session persistence is opt-in — without `data_db`, CLI works in ephemeral mode. kaori backend REST API endpoints for iOS deferred to next session (see `kaori/docs/TODO-agent-integration.md`).
+
+### 2026-04-11 — Web search via Tavily as a native tool
+
+**User intent:** Add web search to the agent so it can answer questions that require current information beyond training cutoff. Reuse the existing MCP infrastructure if possible, otherwise native tool.
+
+**Outcome:** Went native over MCP because (a) no Node toolchain installed locally, and (b) a BaseTool subclass is 70 lines total. Added `WebSearchTool` in `kaori_agent/tools/web_search.py` using the `tavily-python` SDK (read `TAVILY_API_KEY` from env, lazy import so the package is optional). Registered in `get_default_tools()`. Tavily added as `[search]` extras in pyproject. Kaori backend (separate project) reuses this class via an adapter in `kaori/services/agent_tools.py` so the tool body exists in one place.

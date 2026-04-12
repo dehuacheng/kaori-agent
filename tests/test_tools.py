@@ -1,9 +1,12 @@
 """Tests for concrete tool implementations."""
 
+from unittest.mock import patch
+
 import pytest
 
 from kaori_agent.tools.read_file import ReadFileTool
 from kaori_agent.tools.search import GlobTool, GrepTool
+from kaori_agent.tools.web_search import WebSearchTool
 
 
 class TestReadFileTool:
@@ -113,3 +116,54 @@ class TestGrepTool:
         result = await tool.execute(pattern="[invalid", path=str(tmp_path))
         assert result.is_error
         assert "regex" in result.output.lower()
+
+
+class TestWebSearchTool:
+    @pytest.mark.asyncio
+    async def test_missing_api_key(self, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = WebSearchTool()
+        result = await tool.execute(query="anything")
+        assert result.is_error
+        assert "TAVILY_API_KEY" in result.output
+
+    @pytest.mark.asyncio
+    async def test_formats_results(self, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+
+        fake_response = {
+            "answer": "Leo Messi is an Argentine footballer.",
+            "results": [
+                {"title": "Lionel Messi - Wikipedia", "url": "https://en.wikipedia.org/wiki/Lionel_Messi", "content": "Messi is a forward..."},
+                {"title": "Official Site", "url": "https://messi.com", "content": "Home of Leo."},
+            ],
+        }
+
+        class FakeClient:
+            def __init__(self, api_key): pass
+            def search(self, **kwargs): return fake_response
+
+        with patch("tavily.TavilyClient", FakeClient):
+            tool = WebSearchTool()
+            result = await tool.execute(query="Who is Messi?", max_results=2)
+
+        assert not result.is_error
+        assert "Leo Messi is an Argentine footballer" in result.output
+        assert "[1] Lionel Messi - Wikipedia" in result.output
+        assert "https://messi.com" in result.output
+
+    @pytest.mark.asyncio
+    async def test_clamps_max_results(self, monkeypatch):
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, api_key): pass
+            def search(self, **kwargs):
+                captured.update(kwargs)
+                return {"results": []}
+
+        with patch("tavily.TavilyClient", FakeClient):
+            tool = WebSearchTool()
+            await tool.execute(query="x", max_results=50)
+        assert captured["max_results"] == 10
