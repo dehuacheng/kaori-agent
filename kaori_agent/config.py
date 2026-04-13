@@ -41,6 +41,14 @@ class MCPServerConfig:
 
 
 @dataclass
+class FeedContextConfig:
+    """Configuration for injecting recent kaori feed data into the system prompt."""
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:8000"
+    token: str | None = None
+
+
+@dataclass
 class Config:
     """Top-level agent configuration."""
     backend: BackendConfig = field(default_factory=lambda: BackendConfig(name="deepseek", type="openai", model="deepseek-chat"))
@@ -53,6 +61,7 @@ class Config:
     data_db: Path | None = None              # path to kaori.db (or any SQLite DB)
     auto_compact_threshold: int = 80         # % of context window to trigger compaction
     disabled_tools: list[str] = field(default_factory=list)  # tool names to exclude
+    feed_context: FeedContextConfig = field(default_factory=FeedContextConfig)
 
 
 _config: Config | None = None
@@ -141,6 +150,24 @@ def _load_config() -> Config:
             cwd=server_data.get("cwd"),
             env=server_data.get("env", {}),
         ))
+
+    # --- Feed context ---
+    feed_yaml = yaml_data.get("feed_context")
+    if isinstance(feed_yaml, dict):
+        config.feed_context.enabled = bool(feed_yaml.get("enabled", False))
+        config.feed_context.base_url = feed_yaml.get(
+            "base_url", config.feed_context.base_url
+        )
+        token = feed_yaml.get("token")
+        if not token:
+            # Fall back to KAORI_API_TOKEN from the kaori MCP server env
+            for srv in config.mcp_servers:
+                if srv.name == "kaori":
+                    token = srv.env.get("KAORI_API_TOKEN")
+                    break
+        if not token:
+            token = os.environ.get("KAORI_API_TOKEN")
+        config.feed_context.token = token
 
     # --- Resolve personality file ---
     if config.personality_file:

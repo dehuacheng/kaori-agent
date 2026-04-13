@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     model       TEXT,
     message_count INTEGER NOT NULL DEFAULT 0,
     token_count_approx INTEGER NOT NULL DEFAULT 0,
+    summary     TEXT,
+    summary_updated_at TEXT,
     created_at  TEXT    DEFAULT (datetime('now')),
     updated_at  TEXT    DEFAULT (datetime('now'))
 );
@@ -141,6 +143,15 @@ class SessionStore:
         db = await self._get_db()
         try:
             await db.executescript(_AGENT_SCHEMA)
+            # Additive migrations for pre-existing agent_sessions rows
+            cursor = await db.execute("PRAGMA table_info(agent_sessions)")
+            cols = {r[1] for r in await cursor.fetchall()}
+            if "summary" not in cols:
+                await db.execute("ALTER TABLE agent_sessions ADD COLUMN summary TEXT")
+            if "summary_updated_at" not in cols:
+                await db.execute(
+                    "ALTER TABLE agent_sessions ADD COLUMN summary_updated_at TEXT"
+                )
             await db.commit()
         finally:
             await db.close()
@@ -216,6 +227,7 @@ class SessionStore:
             messages=messages,
             _next_seq=next_seq,
             _compaction=compaction,
+            summary=session_data.get("summary"),
         )
         return session
 
@@ -227,12 +239,26 @@ class SessionStore:
         try:
             cursor = await db.execute(
                 "SELECT id, title, status, backend, model, message_count, "
-                "token_count_approx, created_at, updated_at "
+                "token_count_approx, summary, summary_updated_at, "
+                "created_at, updated_at "
                 "FROM agent_sessions WHERE status = ? "
                 "ORDER BY updated_at DESC LIMIT ?",
                 (status, limit),
             )
             return [dict(r) for r in await cursor.fetchall()]
+        finally:
+            await db.close()
+
+    async def save_session_summary(self, session_id: str, summary: str) -> None:
+        """Persist a friend-style summary on the session."""
+        db = await self._get_db()
+        try:
+            await db.execute(
+                "UPDATE agent_sessions SET summary = ?, "
+                "summary_updated_at = datetime('now') WHERE id = ?",
+                (summary, session_id),
+            )
+            await db.commit()
         finally:
             await db.close()
 
@@ -326,6 +352,7 @@ class Session:
     _next_seq: int = 0
     _compaction: dict | None = field(default=None, repr=False)
     _total_tokens: int = 0
+    summary: str | None = None
 
     async def append_message(self, role: str, content_dict: dict) -> None:
         """Persist a single message to DB. Call after engine appends to messages."""
@@ -548,3 +575,35 @@ class Session:
             "version": new_version,
         }
         return True
+
+    async def generate_summary(
+        self,
+        backend,  # LLMBackend instance
+        system_prompt: str,  # kept for backward compat; ignored (prompt_kit owns it)
+        max_tokens: int,
+        min_user_messages: int = 2,
+        force: bool = False,
+    ) -> str | None:
+        """Generate and persist a friend-style 3-5 sentence summary of this session.
+
+        Text generation is delegated to kaori_agent.prompt_kit so the CLI and the
+        kaori backend share one summarizer; persistence stays local (writes to
+        agent_sessions.summary via this session's store).
+        """
+        if self.summary and not force:
+            return self.summary
+
+        from kaori_agent.prompt_kit import generate_session_summary
+        text = await generate_session_summary(
+            backend=backend,
+            model=self.model,
+            messages=self.messages,
+            max_tokens=max_tokens,
+            min_user_messages=min_user_messages,
+        )
+        if not text:
+            return None
+
+        self.summary = text
+        await self.store.save_session_summary(self.id, text)
+        return text

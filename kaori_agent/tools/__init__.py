@@ -15,11 +15,21 @@ def get_default_tools(
     session_store=None,
     session_id: str | None = None,
     disabled_tools: list[str] | None = None,
+    on_memory_save=None,
 ) -> list[BaseTool]:
-    """Return built-in tools. Memory/session tools are included if session_store is provided."""
+    """Return built-in tools. Memory/session tools are included if session_store is provided.
+
+    Args:
+        on_memory_save: Optional callback (key, value, category) -> None, passed to
+            SaveMemoryTool so the CLI can surface a subtle indicator on each save.
+    """
     tools: list[BaseTool] = [ReadFileTool(), GlobTool(), GrepTool(), WebSearchTool()]
     if session_store is not None:
-        tools.append(SaveMemoryTool(session_store=session_store, session_id=session_id))
+        tools.append(SaveMemoryTool(
+            session_store=session_store,
+            session_id=session_id,
+            on_save=on_memory_save,
+        ))
         tools.append(GetMemoryTool(session_store=session_store))
         tools.append(ListSessionsTool(session_store=session_store))
         tools.append(ReadSessionTool(session_store=session_store))

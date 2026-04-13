@@ -9,6 +9,7 @@ Personal assistant agent with tool_use support, inspired by Claude Code's archit
 - **Architecture:** Chat-based engine with pluggable tools, swappable LLM backends, and YAML-based skills
 - **Design doc:** `docs/design.md`
 - **Decision log:** `docs/DECISIONS.md`
+- **Frontend parity (READ FIRST when changing prompt/persona/memory/context):** `docs/FRONTEND-PARITY.md` — single source of truth for behavior shared between CLI and iOS
 
 ## Key Architecture
 

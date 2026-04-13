@@ -34,9 +34,16 @@ class SaveMemoryTool(BaseTool):
         "required": ["key", "value"],
     }
 
-    def __init__(self, session_store=None, session_id: str | None = None):
+    def __init__(self, session_store=None, session_id: str | None = None, on_save=None):
+        """
+        Args:
+            on_save: Optional callback (key, value, category) -> None, invoked after a
+                successful save. The CLI uses this to print a dim indicator so the user
+                sees what was captured without the agent announcing it in chat.
+        """
         self._store = session_store
         self._session_id = session_id
+        self._on_save = on_save
 
     async def execute(self, **kwargs) -> ToolResult:
         key = kwargs["key"]
@@ -50,6 +57,11 @@ class SaveMemoryTool(BaseTool):
             )
 
         await self._store.set_memory(key, value, category, source=self._session_id)
+        if self._on_save is not None:
+            try:
+                self._on_save(key, value, category)
+            except Exception:
+                pass
         return ToolResult(output=f"Saved: {key} = {value}")
 
 

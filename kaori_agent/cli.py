@@ -6,6 +6,7 @@ import sys
 
 from kaori_agent.config import get_config
 from kaori_agent.engine import run_turn_stream
+from kaori_agent.feed_context import fetch_recent_feed
 from kaori_agent.llm import get_backend
 from kaori_agent.llm.base import LLMError
 from kaori_agent.prompt import build_system_prompt
@@ -85,6 +86,62 @@ async def _handle_stream(backend, messages, tools, system_prompt, model, max_tok
     if in_thinking:
         print()
     print()
+
+
+# ---------------------------------------------------------------------------
+# Session digest + feed helpers
+# ---------------------------------------------------------------------------
+
+async def _build_session_digests(
+    session_store,
+    current_session_id: str | None,
+    max_recent: int = 3,
+    older_limit: int = 8,
+) -> dict | None:
+    """Fetch sessions and shape into a digest dict via the shared prompt_kit."""
+    if session_store is None:
+        return None
+    from kaori_agent.prompt_kit import shape_session_digests
+    sessions = await session_store.list_sessions(limit=max_recent + older_limit)
+    return shape_session_digests(
+        sessions, current_session_id=current_session_id, max_recent=max_recent,
+    )
+
+
+async def _get_feed_snapshot(config) -> str | None:
+    """Fetch feed snapshot if enabled; print a dim note on failure."""
+    if not config.feed_context.enabled:
+        return None
+    snap = await fetch_recent_feed(
+        config.feed_context.base_url, config.feed_context.token
+    )
+    if snap is None:
+        _info("(feed unavailable — continuing without lifestyle context)")
+    return snap
+
+
+def _make_on_memory_save():
+    """Callback for SaveMemoryTool that prints a dim '(remembered: k = v)' line."""
+    def _cb(key: str, value: str, category: str) -> None:
+        if len(value) > 120:
+            value = value[:120] + "…"
+        msg = f"  (remembered: {key} = {value})"
+        if _has_rich:
+            _console.print(Text(msg, style="dim italic"))
+        else:
+            print(msg)
+    return _cb
+
+
+async def _try_generate_summary(session, backend, max_tokens: int) -> None:
+    """Best-effort: generate & persist a session summary. Never raises."""
+    if session is None:
+        return
+    try:
+        # The system_prompt arg is kept for backward compat and ignored.
+        await session.generate_summary(backend, "", max_tokens)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +226,15 @@ async def main() -> None:
             config.backend.name, config.backend.model
         )
 
+    on_mem_save = _make_on_memory_save()
+
     # --- Tools ---
     registry = ToolRegistry()
     for tool in get_default_tools(
         session_store=session_store,
         session_id=session.id if session else None,
         disabled_tools=config.disabled_tools,
+        on_memory_save=on_mem_save,
     ):
         registry.register(tool)
 
@@ -200,11 +260,22 @@ async def main() -> None:
             except Exception as e:
                 _error(f"Failed to connect to MCP server '{srv.name}': {e}")
 
-    # --- Build system prompt with memory ---
-    memory_entries = []
+    # --- Context to inject: memory, session digests, feed snapshot ---
+    memory_entries: list = []
     if session_store:
         memory_entries = await session_store.list_memory()
-    system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=is_resumed)
+    session_digests = await _build_session_digests(
+        session_store, session.id if session else None
+    )
+    feed_snapshot = await _get_feed_snapshot(config)
+
+    system_prompt = build_system_prompt(
+        config,
+        memory_entries=memory_entries,
+        is_resumed=is_resumed,
+        session_digests=session_digests,
+        feed_snapshot=feed_snapshot,
+    )
 
     # Use session's messages list if persistent, else ephemeral
     messages: list = session.messages if session else []
@@ -215,6 +286,10 @@ async def main() -> None:
         _info(f"Session: {session.id[:8]}  (persistent)")
     else:
         _info("Session: ephemeral (set data_db in config for persistence)")
+    if session_digests and session_digests.get("recent"):
+        _info(f"Continuity: loaded {len(session_digests['recent'])} recent session summaries")
+    if feed_snapshot:
+        _info("Feed: loaded recent lifestyle context")
     _info("Type /quit to exit, /help for commands.\n")
 
     if _has_prompt_toolkit:
@@ -228,6 +303,21 @@ async def main() -> None:
         async def _get_input() -> str:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, lambda: input("you> "))
+
+    # Helper: rebuild tool registry when the active session changes
+    def _rebuild_registry() -> ToolRegistry:
+        reg = ToolRegistry()
+        for tool in get_default_tools(
+            session_store=session_store,
+            session_id=session.id if session else None,
+            disabled_tools=config.disabled_tools,
+            on_memory_save=on_mem_save,
+        ):
+            reg.register(tool)
+        if mcp_manager:
+            for tool in mcp_manager.get_all_tools():
+                reg.register(tool)
+        return reg
 
     while True:
         try:
@@ -272,24 +362,30 @@ async def main() -> None:
                 if not session_store:
                     _error("No session store configured.")
                 else:
-                    # Save current session title
+                    # Close out the current session: title + summary
                     if session:
                         await session.auto_title()
+                        _info("Summarizing current session...")
+                        await _try_generate_summary(session, backend, config.max_tokens)
                     session = await session_store.create_session(
                         config.backend.name, config.backend.model
                     )
                     messages = session.messages
                     is_resumed = False
-                    # Rebuild system prompt (fresh session)
+                    # Refresh injected context
                     memory_entries = await session_store.list_memory()
-                    system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=False)
-                    # Re-register tools with new session_id
-                    registry = ToolRegistry()
-                    for tool in get_default_tools(session_store=session_store, session_id=session.id, disabled_tools=config.disabled_tools):
-                        registry.register(tool)
-                    if mcp_manager:
-                        for tool in mcp_manager.get_all_tools():
-                            registry.register(tool)
+                    session_digests = await _build_session_digests(
+                        session_store, session.id
+                    )
+                    feed_snapshot = await _get_feed_snapshot(config)
+                    system_prompt = build_system_prompt(
+                        config,
+                        memory_entries=memory_entries,
+                        is_resumed=False,
+                        session_digests=session_digests,
+                        feed_snapshot=feed_snapshot,
+                    )
+                    registry = _rebuild_registry()
                     _info(f"New session: {session.id[:8]}")
                 continue
 
@@ -299,7 +395,6 @@ async def main() -> None:
                     continue
                 parts = user_input.split(None, 1)
                 if len(parts) < 2:
-                    # Show list and prompt
                     await _cmd_sessions(session_store)
                     _info("Usage: /resume <id-prefix>")
                     continue
@@ -312,9 +407,11 @@ async def main() -> None:
                 if len(matches) > 1:
                     _error(f"Ambiguous prefix '{prefix}' — matches {len(matches)} sessions.")
                     continue
-                # Save current session title
+                # Close out the current session before switching
                 if session:
                     await session.auto_title()
+                    _info("Summarizing current session...")
+                    await _try_generate_summary(session, backend, config.max_tokens)
                 target = matches[0]
                 try:
                     session = await session_store.load_session(target["id"])
@@ -323,16 +420,19 @@ async def main() -> None:
                     continue
                 messages = session.messages
                 is_resumed = True
-                # Rebuild prompt with memory + resumed context
                 memory_entries = await session_store.list_memory()
-                system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=True)
-                # Re-register tools
-                registry = ToolRegistry()
-                for tool in get_default_tools(session_store=session_store, session_id=session.id, disabled_tools=config.disabled_tools):
-                    registry.register(tool)
-                if mcp_manager:
-                    for tool in mcp_manager.get_all_tools():
-                        registry.register(tool)
+                session_digests = await _build_session_digests(
+                    session_store, session.id
+                )
+                feed_snapshot = await _get_feed_snapshot(config)
+                system_prompt = build_system_prompt(
+                    config,
+                    memory_entries=memory_entries,
+                    is_resumed=True,
+                    session_digests=session_digests,
+                    feed_snapshot=feed_snapshot,
+                )
+                registry = _rebuild_registry()
                 title = session.title or "(untitled)"
                 _info(f"Resumed session: {session.id[:8]} — {title} ({len(messages)} messages)")
                 continue
@@ -406,7 +506,6 @@ async def main() -> None:
                         threshold_pct=0,  # force compaction
                     )
                     if did_compact:
-                        # Rebuild effective messages
                         messages = session.get_effective_messages()
                         _info("Compaction complete.")
                     else:
@@ -426,8 +525,14 @@ async def main() -> None:
 
         msg_count_before = len(messages)
 
-        # Rebuild system prompt each turn so date/time stays current
-        system_prompt = build_system_prompt(config, memory_entries=memory_entries, is_resumed=is_resumed)
+        # Rebuild system prompt each turn so date/time stays current (digests + feed are cached)
+        system_prompt = build_system_prompt(
+            config,
+            memory_entries=memory_entries,
+            is_resumed=is_resumed,
+            session_digests=session_digests,
+            feed_snapshot=feed_snapshot,
+        )
 
         try:
             await _handle_stream(
@@ -452,7 +557,6 @@ async def main() -> None:
                     if role == "tool":
                         role = "tool_result"
                     elif isinstance(msg.get("content"), list):
-                        # Content blocks (tool results in Anthropic format)
                         first = msg["content"][0] if msg["content"] else {}
                         if isinstance(first, dict) and first.get("type") == "tool_result":
                             role = "tool_result"
@@ -461,15 +565,20 @@ async def main() -> None:
             # Auto-title after first exchange
             await session.auto_title()
 
+            # Live memory refresh so the system prompt reflects anything the agent
+            # saved during this turn (next turn's prompt will include it).
+            memory_entries = await session_store.list_memory()
+
             # Check if compaction needed
             await session.compact_if_needed(
                 backend, system_prompt, config.max_tokens,
                 threshold_pct=config.auto_compact_threshold,
             )
 
-    # --- Cleanup ---
+    # --- Cleanup: title + summary before exit ---
     if session:
         await session.auto_title()
+        await _try_generate_summary(session, backend, config.max_tokens)
 
     if mcp_manager:
         await mcp_manager.close()

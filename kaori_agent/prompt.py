@@ -1,58 +1,39 @@
-"""System prompt builder."""
+"""System prompt builder — CLI-side thin wrapper around kaori_agent.prompt_kit.
+
+Keeps the old `build_system_prompt(config, ...)` signature so existing CLI code
+continues to work. The shared logic lives in `kaori_agent.prompt_kit`; both the
+CLI and the kaori backend call through it. See docs/FRONTEND-PARITY.md.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from kaori_agent.config import Config, _DEFAULT_SYSTEM_PROMPT
-
-_BASE_INSTRUCTIONS = """\
-You are a helpful personal assistant running in a terminal.
-You have access to tools for reading files and searching codebases.
-Be concise and direct."""
+from kaori_agent.prompt_kit import build_system_prompt as _kit_build
 
 
 def build_system_prompt(
     config: Config,
     memory_entries: list[dict] | None = None,
     is_resumed: bool = False,
+    session_digests: dict | None = None,
+    feed_snapshot: str | None = None,
 ) -> str:
-    """Build the system prompt from config, memory, and session context.
+    """Build the system prompt using config's persona, delegating assembly to prompt_kit.
 
-    If the user has set a custom system_prompt (via YAML or personality file),
-    it is placed first, followed by the base operational instructions.
-    If no custom prompt, just use the base instructions.
-    Memory entries and session context are appended after.
+    The CLI's persona resolution currently reads the personality file at
+    config-load time; a custom `config.system_prompt` different from the default
+    is treated as the active persona. In the backend, persona is fetched from
+    the agent_prompts DB table with the file as fallback — see
+    kaori_agent.prompt_kit.persona.resolve_persona.
     """
     user_prompt = config.system_prompt
     has_custom = user_prompt and user_prompt != _DEFAULT_SYSTEM_PROMPT
+    persona = user_prompt if has_custom else ""
 
-    if has_custom:
-        parts = [user_prompt, "---", _BASE_INSTRUCTIONS]
-    else:
-        parts = [_BASE_INSTRUCTIONS]
-
-    # Current date/time
-    now = datetime.now()
-    utc_now = datetime.now(timezone.utc)
-    parts.append(
-        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M %A')} (local), "
-        f"{utc_now.strftime('%Y-%m-%d %H:%M')} UTC"
+    return _kit_build(
+        persona_text=persona,
+        memory_entries=memory_entries,
+        is_resumed=is_resumed,
+        session_digests=session_digests,
+        feed_snapshot=feed_snapshot,
     )
-
-    # Inject persistent memory
-    if memory_entries:
-        lines = [f"- {e['key']}: {e['value']}" for e in memory_entries]
-        parts.append(
-            "## Things I remember about you\n" + "\n".join(lines)
-        )
-
-    # Note if this is a resumed session
-    if is_resumed:
-        parts.append(
-            "## Session context\n"
-            "This is a continuation of a previous conversation. "
-            "The earlier messages are loaded from history."
-        )
-
-    return "\n\n".join(parts)
