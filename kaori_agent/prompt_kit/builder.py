@@ -86,6 +86,7 @@ def build_system_prompt(
     session_digests: dict | None = None,
     feed_snapshot: str | None = None,
     base_instructions: str | None = None,
+    vault_routing: str | None = None,
 ) -> str:
     """Assemble the full system prompt.
 
@@ -97,6 +98,7 @@ def build_system_prompt(
         session_digests: Output of shape_session_digests(...) — or None.
         feed_snapshot: Output of render_feed_payload(...) — or None.
         base_instructions: Override the default base-instructions block.
+        vault_routing: Output of load_vault_routing(...) — or None.
     """
     parts: list[str] = []
     base = base_instructions or _BASE_INSTRUCTIONS
@@ -121,6 +123,12 @@ def build_system_prompt(
         parts.append(
             "## What's going on with you lately (today + yesterday)\n"
             + feed_snapshot.strip()
+        )
+
+    if vault_routing:
+        parts.append(
+            "## Your Obsidian vault (knowledge backend, read-only)\n"
+            + vault_routing.strip()
         )
 
     if memory_entries:

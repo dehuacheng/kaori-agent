@@ -45,6 +45,7 @@ class TestMakeAssistantMessage:
         msg = backend.make_assistant_message(result)
         assert msg["role"] == "assistant"
         assert msg["content"] == "Hello"
+        assert "reasoning_content" not in msg  # not added when empty
 
     def test_with_tool_calls(self):
         backend = OpenAIBackend.__new__(OpenAIBackend)
@@ -61,6 +62,21 @@ class TestMakeAssistantMessage:
         assert tc["id"] == "tc1"
         assert tc["type"] == "function"
         assert json.loads(tc["function"]["arguments"]) == {"a": 1}
+
+    def test_with_reasoning_content(self):
+        """reasoning_content from deepseek thinking-mode must be echoed back so
+        the next request doesn't 400 with 'reasoning_content must be passed back'."""
+        backend = OpenAIBackend.__new__(OpenAIBackend)
+        result = TurnResult(
+            text="I'll search.",
+            tool_calls=[ToolCall(id="tc1", name="search", input={"q": "x"})],
+            stop_reason="tool_use",
+            reasoning_content="Let me think through this carefully...",
+        )
+        msg = backend.make_assistant_message(result)
+        assert msg["reasoning_content"] == "Let me think through this carefully..."
+        assert msg["content"] == "I'll search."
+        assert len(msg["tool_calls"]) == 1
 
 
 class TestMakeToolResults:
@@ -205,6 +221,9 @@ class TestChatStream:
         assert events[2].text == "Answer."
         assert events[3].type == "turn_complete"
         assert events[3].result.text == "Answer."
+        # Reasoning must accumulate into the TurnResult so the next assistant
+        # message can echo it back to deepseek thinking-mode.
+        assert events[3].result.reasoning_content == "Thinking... deeper."
 
     @pytest.mark.asyncio
     async def test_reasoning_via_model_extra(self):

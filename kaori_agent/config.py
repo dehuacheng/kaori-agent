@@ -49,6 +49,15 @@ class FeedContextConfig:
 
 
 @dataclass
+class VaultConfig:
+    """Configuration for the Obsidian vault knowledge backend (read-only)."""
+    enabled: bool = False
+    root: Path | None = None
+    exclude_paths: list[str] = field(default_factory=list)  # relative to root, soft-excluded from search
+    preload_routing: bool = True                             # inject AGENTS.md + INDEX.md into system prompt
+
+
+@dataclass
 class Config:
     """Top-level agent configuration."""
     backend: BackendConfig = field(default_factory=lambda: BackendConfig(name="deepseek", type="openai", model="deepseek-chat"))
@@ -62,9 +71,45 @@ class Config:
     auto_compact_threshold: int = 80         # % of context window to trigger compaction
     disabled_tools: list[str] = field(default_factory=list)  # tool names to exclude
     feed_context: FeedContextConfig = field(default_factory=FeedContextConfig)
+    vault: VaultConfig = field(default_factory=VaultConfig)
 
 
 _config: Config | None = None
+
+
+def _parse_vault_block(yaml_data: dict, cfg: VaultConfig) -> VaultConfig:
+    """Apply the `vault:` block from a parsed YAML dict onto a VaultConfig."""
+    vault_yaml = yaml_data.get("vault")
+    if not isinstance(vault_yaml, dict):
+        return cfg
+    cfg.enabled = bool(vault_yaml.get("enabled", False))
+    if "root" in vault_yaml:
+        cfg.root = Path(vault_yaml["root"]).expanduser()
+    if "exclude_paths" in vault_yaml:
+        cfg.exclude_paths = list(vault_yaml["exclude_paths"])
+    if "preload_routing" in vault_yaml:
+        cfg.preload_routing = bool(vault_yaml["preload_routing"])
+    return cfg
+
+
+def load_vault_config(yaml_path: Path | None = None) -> VaultConfig:
+    """Load just the `vault:` block from the kaori-agent config YAML.
+
+    Decoupled from the full `Config` singleton so that callers like the kaori
+    backend (which has its own backend resolution path — see
+    `kaori.llm.agent_backend._load_kaori_agent_config`) can pull vault settings
+    without paying the full config-load cost or coupling to env-var overrides.
+    """
+    cfg = VaultConfig()
+    path = yaml_path or (Path.home() / ".kaori-agent" / "config.yaml")
+    if not path.exists():
+        return cfg
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        return cfg
+    return _parse_vault_block(data, cfg)
 
 
 def get_config() -> Config:
@@ -168,6 +213,9 @@ def _load_config() -> Config:
         if not token:
             token = os.environ.get("KAORI_API_TOKEN")
         config.feed_context.token = token
+
+    # --- Vault ---
+    _parse_vault_block(yaml_data, config.vault)
 
     # --- Resolve personality file ---
     if config.personality_file:

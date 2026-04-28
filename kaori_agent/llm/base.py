@@ -25,6 +25,7 @@ class TurnResult:
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"  # "end_turn" | "tool_use" | "max_tokens"
     raw: Any = None  # provider-specific response for message history
+    reasoning_content: str = ""  # deepseek-v4-pro / R1 thinking — must be echoed back
 
 
 @dataclass

@@ -12,6 +12,7 @@ from kaori_agent.llm.base import LLMError
 from kaori_agent.prompt import build_system_prompt
 from kaori_agent.tool_registry import ToolRegistry
 from kaori_agent.tools import get_default_tools
+from kaori_agent.vault_context import load_vault_routing
 
 # Try rich + prompt_toolkit; fall back to plain I/O
 try:
@@ -235,6 +236,7 @@ async def main() -> None:
         session_id=session.id if session else None,
         disabled_tools=config.disabled_tools,
         on_memory_save=on_mem_save,
+        vault_config=config.vault,
     ):
         registry.register(tool)
 
@@ -260,7 +262,7 @@ async def main() -> None:
             except Exception as e:
                 _error(f"Failed to connect to MCP server '{srv.name}': {e}")
 
-    # --- Context to inject: memory, session digests, feed snapshot ---
+    # --- Context to inject: memory, session digests, feed snapshot, vault routing ---
     memory_entries: list = []
     if session_store:
         memory_entries = await session_store.list_memory()
@@ -268,6 +270,9 @@ async def main() -> None:
         session_store, session.id if session else None
     )
     feed_snapshot = await _get_feed_snapshot(config)
+    vault_routing: str | None = None
+    if config.vault.enabled and config.vault.root and config.vault.preload_routing:
+        vault_routing = load_vault_routing(config.vault.root)
 
     system_prompt = build_system_prompt(
         config,
@@ -275,6 +280,7 @@ async def main() -> None:
         is_resumed=is_resumed,
         session_digests=session_digests,
         feed_snapshot=feed_snapshot,
+        vault_routing=vault_routing,
     )
 
     # Use session's messages list if persistent, else ephemeral
@@ -290,6 +296,8 @@ async def main() -> None:
         _info(f"Continuity: loaded {len(session_digests['recent'])} recent session summaries")
     if feed_snapshot:
         _info("Feed: loaded recent lifestyle context")
+    if vault_routing:
+        _info(f"Vault: loaded routing preamble from {config.vault.root}")
     _info("Type /quit to exit, /help for commands.\n")
 
     if _has_prompt_toolkit:
@@ -312,6 +320,7 @@ async def main() -> None:
             session_id=session.id if session else None,
             disabled_tools=config.disabled_tools,
             on_memory_save=on_mem_save,
+            vault_config=config.vault,
         ):
             reg.register(tool)
         if mcp_manager:
@@ -384,6 +393,7 @@ async def main() -> None:
                         is_resumed=False,
                         session_digests=session_digests,
                         feed_snapshot=feed_snapshot,
+                        vault_routing=vault_routing,
                     )
                     registry = _rebuild_registry()
                     _info(f"New session: {session.id[:8]}")
@@ -431,6 +441,7 @@ async def main() -> None:
                     is_resumed=True,
                     session_digests=session_digests,
                     feed_snapshot=feed_snapshot,
+                    vault_routing=vault_routing,
                 )
                 registry = _rebuild_registry()
                 title = session.title or "(untitled)"
@@ -532,6 +543,7 @@ async def main() -> None:
             is_resumed=is_resumed,
             session_digests=session_digests,
             feed_snapshot=feed_snapshot,
+            vault_routing=vault_routing,
         )
 
         try:

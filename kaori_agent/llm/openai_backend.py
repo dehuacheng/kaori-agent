@@ -46,6 +46,11 @@ class OpenAIBackend(LLMBackend):
         # Extract text
         text = message.content or ""
 
+        # Extract reasoning_content (DeepSeek thinking-mode / R1)
+        reasoning = getattr(message, "reasoning_content", "") or ""
+        if not reasoning and hasattr(message, "model_extra") and message.model_extra:
+            reasoning = message.model_extra.get("reasoning_content", "") or ""
+
         # Extract tool calls
         tool_calls: list[ToolCall] = []
         if message.tool_calls:
@@ -73,6 +78,7 @@ class OpenAIBackend(LLMBackend):
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             raw=message,
+            reasoning_content=reasoning,
         )
 
     async def chat_stream(
@@ -102,6 +108,7 @@ class OpenAIBackend(LLMBackend):
 
         # Accumulate full response while yielding deltas
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []  # accumulated for echo-back on next turn
         # tool_calls accumulator: index -> {id, name, arguments_parts}
         tc_accum: dict[int, dict] = {}
         finish_reason = None
@@ -117,6 +124,7 @@ class OpenAIBackend(LLMBackend):
             if not reasoning and hasattr(delta, "model_extra") and delta.model_extra:
                 reasoning = delta.model_extra.get("reasoning_content")
             if reasoning:
+                reasoning_parts.append(reasoning)
                 yield StreamEvent(type="thinking", text=reasoning)
 
             # Regular text content
@@ -162,7 +170,10 @@ class OpenAIBackend(LLMBackend):
 
         yield StreamEvent(
             type="turn_complete",
-            result=TurnResult(text=text, tool_calls=tool_calls, stop_reason=stop_reason),
+            result=TurnResult(
+                text=text, tool_calls=tool_calls, stop_reason=stop_reason,
+                reasoning_content="".join(reasoning_parts),
+            ),
         )
 
     def format_tool_schemas(self, tools: list) -> list[dict]:
@@ -197,6 +208,14 @@ class OpenAIBackend(LLMBackend):
             # OpenAI requires content to be null (not missing) when tool_calls present
             if "content" not in msg:
                 msg["content"] = None
+        # DeepSeek thinking mode (deepseek-v4-pro) requires reasoning_content to
+        # be echoed back on every subsequent request — without it the API 400s
+        # with "The reasoning_content in the thinking mode must be passed back".
+        # Other OpenAI-compat providers ignore unknown fields, so this is safe.
+        # NOTE: keep in sync with kaori/llm/agent_backend.py:OpenAIAgentBackend
+        # (parallel implementation for the kaori chat service backend ABC).
+        if result.reasoning_content:
+            msg["reasoning_content"] = result.reasoning_content
         return msg
 
     def make_tool_results(

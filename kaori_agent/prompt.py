@@ -17,6 +17,7 @@ def build_system_prompt(
     is_resumed: bool = False,
     session_digests: dict | None = None,
     feed_snapshot: str | None = None,
+    vault_routing: str | None = None,
 ) -> str:
     """Build the system prompt using config's persona, delegating assembly to prompt_kit.
 
@@ -36,4 +37,5 @@ def build_system_prompt(
         is_resumed=is_resumed,
         session_digests=session_digests,
         feed_snapshot=feed_snapshot,
+        vault_routing=vault_routing,
     )
